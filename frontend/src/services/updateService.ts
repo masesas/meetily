@@ -28,6 +28,12 @@ export interface UpdateProgress {
  * Update Service
  * Singleton service for managing app updates
  */
+/**
+ * Fork: auto-update is off until this fork publishes its own signed releases.
+ * The upstream feed would replace the fork with the official build.
+ */
+const UPDATES_ENABLED = false;
+
 export class UpdateService {
   private updateCheckInProgress = false;
   private lastCheckTime: number | null = null;
@@ -39,6 +45,10 @@ export class UpdateService {
    * @returns Promise with update information
    */
   async checkForUpdates(force = false): Promise<UpdateInfo> {
+    if (!UPDATES_ENABLED) {
+      return { available: false, currentVersion: await getVersion() };
+    }
+
     // Prevent concurrent update checks
     if (this.updateCheckInProgress) {
       throw new Error('Update check already in progress');
