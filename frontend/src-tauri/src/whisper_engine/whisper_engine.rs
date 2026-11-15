@@ -568,6 +568,9 @@ impl WhisperEngine {
         };
         params.set_language(language_code);
         params.set_translate(should_translate);
+        if let Some(prompt) = super::vocabulary::current_initial_prompt() {
+            params.set_initial_prompt(&prompt);
+        }
 
         // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
         // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
@@ -682,6 +685,9 @@ impl WhisperEngine {
         };
         params.set_language(language_code);
         params.set_translate(should_translate);
+        if let Some(prompt) = super::vocabulary::current_initial_prompt() {
+            params.set_initial_prompt(&prompt);
+        }
         params.set_no_timestamps(true);
         params.set_token_timestamps(true);
         params.set_print_special(false);

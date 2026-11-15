@@ -5,7 +5,9 @@ import { MeetingSummary, SummaryProcessResponse } from '@/types';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
+import { consumeAutoFinalization } from '@/lib/transcriptFinalization';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
 import { MeetingDetailsSplitView, type MeetingDetailsTab } from '@/components/MeetingDetails/MeetingDetailsSplitView';
@@ -72,6 +74,40 @@ export default function PageContent({
 
   // Get model config from ConfigContext
   const { modelConfig, setModelConfig, isModelConfigLoading } = useConfig();
+
+  // Reload the transcript when automatic finalization of this meeting finishes
+  useEffect(() => {
+    let unlisteners: (() => void)[] = [];
+    let disposed = false;
+    const subscribe = async () => {
+      const onComplete = await listen<{ meeting_id: string; segments_count: number }>(
+        'retranscription-complete',
+        async event => {
+          if (event.payload.meeting_id !== meeting.id || !consumeAutoFinalization(meeting.id)) return;
+          await onRefetchTranscripts?.();
+          toast.success('Transkrip final siap', {
+            description: `${event.payload.segments_count} segmen dari model akurat.`,
+          });
+        }
+      );
+      const onError = await listen<{ meeting_id: string; error: string }>(
+        'retranscription-error',
+        event => {
+          if (event.payload.meeting_id !== meeting.id || !consumeAutoFinalization(meeting.id)) return;
+          toast.error('Finalisasi transkrip gagal', {
+            description: `${event.payload.error}. Transkrip live tetap tersimpan.`,
+          });
+        }
+      );
+      unlisteners = [onComplete, onError];
+      if (disposed) unlisteners.forEach(u => u());
+    };
+    subscribe();
+    return () => {
+      disposed = true;
+      unlisteners.forEach(u => u());
+    };
+  }, [meeting.id, onRefetchTranscripts]);
 
   // Custom hooks
   const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });

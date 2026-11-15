@@ -426,6 +426,16 @@ pub async fn start_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
     start_recording_with_meeting_name(app, None).await
 }
 
+/// A new recording loads the live model into the shared Whisper engine. A re-transcription still
+/// running would then silently finish with that model, so it is cancelled instead; the meeting
+/// keeps its live transcript and the frontend reports the cancellation.
+fn cancel_retranscription_for_new_recording() {
+    if super::retranscription::is_retranscription_in_progress() {
+        warn!("Recording starts while a re-transcription is running; cancelling the re-transcription");
+        super::retranscription::cancel_retranscription();
+    }
+}
+
 /// Start recording with default devices and optional meeting name
 pub async fn start_recording_with_meeting_name<R: Runtime>(
     app: AppHandle<R>,
@@ -448,6 +458,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     if current_recording_state || IS_RECORDING_STOPPING.load(Ordering::SeqCst) {
         return Err("Recording already in progress".to_string());
     }
+    cancel_retranscription_for_new_recording();
 
     if let Err(error) = crate::ensure_onnx_runtime_available() {
         return Err(map_recording_start_error(
@@ -676,6 +687,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     if current_recording_state || IS_RECORDING_STOPPING.load(Ordering::SeqCst) {
         return Err("Recording already in progress".to_string());
     }
+    cancel_retranscription_for_new_recording();
 
     if let Err(error) = crate::ensure_onnx_runtime_available() {
         return Err(map_recording_start_error(
