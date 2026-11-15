@@ -246,7 +246,20 @@ pub fn start_transcription_task<R: Runtime>(
                                     stats.confidence_count += 1;
                                 }
 
-                                if should_emit_transcript(&transcript) {
+                                let hallucination = super::hallucination::is_likely_hallucination(
+                                    &transcript,
+                                    confidence_opt,
+                                    chunk_duration,
+                                );
+                                if hallucination {
+                                    debug!(
+                                        "dropped likely hallucination ({:.1}s, conf {:?}): {}",
+                                        chunk_duration,
+                                        confidence_opt,
+                                        crate::utils::log_snippet(&transcript, 80)
+                                    );
+                                }
+                                if should_emit_transcript(&transcript) && !hallucination {
                                     if SPEECH_DETECTED_EMITTED
                                         .compare_exchange(
                                             false,
