@@ -6,7 +6,8 @@
 //! finalized transcript lost it, while 4x gain made VAD find it. VAD therefore runs on a copy whose
 //! quiet windows are boosted; transcription keeps using the original samples.
 
-use crate::audio::vad::SpeechSegment;
+use crate::audio::vad::{get_speech_chunks_with_progress, SpeechSegment};
+use anyhow::Result;
 
 const SAMPLE_RATE: usize = 16_000;
 /// Window over which loudness is measured and one gain is applied.
@@ -56,6 +57,22 @@ pub fn with_original_samples(segments: Vec<SpeechSegment>, original: &[f32]) -> 
             }
         })
         .collect()
+}
+
+/// Batch VAD (import, re-transcription): detects speech on a levelled copy so quiet speakers are
+/// found, and returns segments carrying the original samples. Same callback contract as
+/// `get_speech_chunks_with_progress`.
+pub fn get_speech_chunks_leveled<F>(
+    samples_mono_16k: &[f32],
+    redemption_time_ms: u32,
+    progress_callback: F,
+) -> Result<Vec<SpeechSegment>>
+where
+    F: FnMut(u32, usize) -> bool,
+{
+    let leveled = level_for_vad(samples_mono_16k);
+    let segments = get_speech_chunks_with_progress(&leveled, redemption_time_ms, progress_callback)?;
+    Ok(with_original_samples(segments, samples_mono_16k))
 }
 
 #[cfg(test)]

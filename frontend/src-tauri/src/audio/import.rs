@@ -2,7 +2,7 @@
 
 use crate::api::TranscriptSegment;
 use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::audio::vad_leveling::get_speech_chunks_leveled;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
@@ -432,7 +432,8 @@ async fn run_import<R: Runtime>(
     let app_for_vad = app.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
-        get_speech_chunks_with_progress(
+        // Levelled VAD so a quiet remote speaker is not dropped (see vad_leveling)
+        get_speech_chunks_leveled(
             &audio_samples,
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {

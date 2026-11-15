@@ -37,6 +37,7 @@ import { useRouter } from 'next/navigation';
 import { useSidebar } from '../Sidebar/SidebarProvider';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
+import { FINALIZE_WHISPER_MODEL } from '@/lib/transcriptFinalization';
 
 
 interface ImportAudioDialogProps {
@@ -72,7 +73,7 @@ export function ImportAudioDialog({
 }: ImportAudioDialogProps) {
   const router = useRouter();
   const { refetchMeetings } = useSidebar();
-  const { selectedLanguage, transcriptModelConfig } = useConfig();
+  const { selectedLanguage, transcriptModelConfig, isAutoFinalize } = useConfig();
 
   const [title, setTitle] = useState('');
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
@@ -93,6 +94,23 @@ export function ImportAudioDialog({
     fetchModels,
     resetSelection,
   } = useTranscriptionModels(transcriptModelConfig);
+
+  // An import has no live pass, so with auto-finalization on it is transcribed once with the
+  // accurate model. Preselected once per opening when that model is available; the user can
+  // still pick another one.
+  const finalizeModelAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      finalizeModelAppliedRef.current = false;
+      return;
+    }
+    if (!isAutoFinalize || finalizeModelAppliedRef.current) return;
+    const finalizeKey = `whisper:${FINALIZE_WHISPER_MODEL}`;
+    if (availableModels.some(m => `${m.provider}:${m.name}` === finalizeKey)) {
+      finalizeModelAppliedRef.current = true;
+      setSelectedModelKey(finalizeKey);
+    }
+  }, [open, isAutoFinalize, availableModels, setSelectedModelKey]);
 
   const handleImportComplete = useCallback((result: ImportResult) => {
     toast.success(`Import complete! ${result.segments_count} segments created.`);

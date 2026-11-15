@@ -1,7 +1,7 @@
 // Retranscription module - allows re-processing stored audio with different settings
 
 use crate::audio::decoder::decode_audio_file;
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::audio::vad_leveling::get_speech_chunks_leveled;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
@@ -262,11 +262,9 @@ async fn run_retranscription<R: Runtime>(
     let meeting_id_for_vad = meeting_id.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
-        // VAD runs on a loudness-levelled copy so a quiet remote speaker is not dropped;
-        // segments are then rebuilt from the original samples for transcription.
-        let leveled = super::vad_leveling::level_for_vad(&audio_samples);
-        get_speech_chunks_with_progress(
-            &leveled,
+        // Levelled VAD so a quiet remote speaker is not dropped (see vad_leveling)
+        get_speech_chunks_leveled(
+            &audio_samples,
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {
                 // Map VAD progress (0-100) to overall progress (20-25)
@@ -283,7 +281,6 @@ async fn run_retranscription<R: Runtime>(
                 !RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst)
             },
         )
-        .map(|segments| super::vad_leveling::with_original_samples(segments, &audio_samples))
     })
     .await
     .map_err(|e| anyhow!("VAD task panicked: {}", e))?
