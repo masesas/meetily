@@ -137,6 +137,28 @@ pub async fn start_retranscription<R: Runtime>(
     result
 }
 
+/// Transcript segments currently stored for a meeting.
+async fn load_transcript_segments(
+    conn: &mut sqlx::SqliteConnection,
+    meeting_id: &str,
+) -> Result<Vec<crate::api::TranscriptSegment>> {
+    let rows: Vec<(String, String, String, Option<f64>, Option<f64>, Option<f64>)> = sqlx::query_as(
+        "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration
+         FROM transcripts WHERE meeting_id = ?",
+    )
+    .bind(meeting_id)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| anyhow!("Failed to load existing transcripts: {}", e))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, text, timestamp, audio_start_time, audio_end_time, duration)| {
+            crate::api::TranscriptSegment { id, text, timestamp, audio_start_time, audio_end_time, duration }
+        })
+        .collect())
+}
+
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
@@ -437,6 +459,17 @@ async fn run_retranscription<R: Runtime>(
     let mut tx = sqlx::Connection::begin(&mut *conn)
         .await
         .map_err(|e| anyhow!("Failed to start transaction: {}", e))?;
+
+    // Keep earlier text for time ranges this run left uncovered (VAD can miss quiet speech)
+    let previous = load_transcript_segments(&mut tx, &meeting_id).await?;
+    let new_count = segments.len();
+    let segments = super::transcript_merge::keep_uncovered_previous(segments, previous);
+    if segments.len() > new_count {
+        info!(
+            "Kept {} earlier segment(s) in time ranges the re-transcription did not cover",
+            segments.len() - new_count
+        );
+    }
 
     sqlx::query("DELETE FROM transcripts WHERE meeting_id = ?")
         .bind(&meeting_id)
