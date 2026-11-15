@@ -5,20 +5,28 @@
 //! below ~17 % confidence were fillers or invented words ("Omdat"). Both are dropped from the live
 //! view. The post-recording finalization re-transcribes the whole file, so nothing is lost for good.
 
-/// Phrases Whisper produces on silence or noise (subtitle-style endings it was trained on).
+/// Short phrases Whisper produces on silence or noise. They are also said for real in meetings,
+/// so they are only dropped at low confidence.
 const SILENCE_PHRASES: &[&str] = &[
     "terima kasih",
-    "terima kasih telah menonton",
-    "terima kasih sudah menonton",
     "terima kasih atas perhatiannya",
     "thank you",
+];
+/// Video-outro phrases from Whisper's subtitle training data; practically never said in a
+/// meeting. A finalization replaced 10 s of real speech with one of them at 39 % confidence.
+const OUTRO_PHRASES: &[&str] = &[
+    "terima kasih telah menonton",
+    "terima kasih sudah menonton",
+    "terima kasih telah menyaksikan",
     "thanks for watching",
     "thank you for watching",
 ];
 
-/// A known silence phrase is only dropped below this confidence; a real "terima kasih" is
+/// A short silence phrase is only dropped below this confidence; a real "terima kasih" is
 /// usually transcribed with higher confidence.
 const SILENCE_PHRASE_MAX_CONFIDENCE: f32 = 0.35;
+/// An outro phrase is dropped below this confidence.
+const OUTRO_PHRASE_MAX_CONFIDENCE: f32 = 0.6;
 /// Chunks shorter than this ...
 const SHORT_CHUNK_MAX_SECONDS: f64 = 1.5;
 /// ... and below this confidence are dropped.
@@ -34,6 +42,12 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
+/// True when the whole text is a video-outro phrase. Used where no confidence is stored, such as
+/// transcript segments loaded back from the database.
+pub fn is_outro_phrase(text: &str) -> bool {
+    OUTRO_PHRASES.contains(&normalize(text).as_str())
+}
+
 /// True when a live transcript chunk should not be shown. `confidence` is `None` for engines
 /// that do not report it; then nothing is dropped.
 pub fn is_likely_hallucination(text: &str, confidence: Option<f32>, duration_secs: f64) -> bool {
@@ -42,6 +56,9 @@ pub fn is_likely_hallucination(text: &str, confidence: Option<f32>, duration_sec
     };
     let normalized = normalize(text);
     if confidence < SILENCE_PHRASE_MAX_CONFIDENCE && SILENCE_PHRASES.contains(&normalized.as_str()) {
+        return true;
+    }
+    if confidence < OUTRO_PHRASE_MAX_CONFIDENCE && OUTRO_PHRASES.contains(&normalized.as_str()) {
         return true;
     }
     duration_secs < SHORT_CHUNK_MAX_SECONDS && confidence < SHORT_CHUNK_MAX_CONFIDENCE
@@ -56,6 +73,25 @@ mod tests {
         assert!(is_likely_hallucination("Terima kasih.", Some(0.24), 3.2));
         assert!(is_likely_hallucination("  terima   kasih ", Some(0.22), 1.6));
         assert!(is_likely_hallucination("Thanks for watching!", Some(0.30), 2.0));
+    }
+
+    #[test]
+    fn drops_outro_phrase_up_to_higher_confidence() {
+        // Finalization output on 10 s of real speech, 2026-11-16
+        assert!(is_likely_hallucination("Terima kasih telah menonton!", Some(0.39), 10.3));
+        assert!(!is_likely_hallucination("Terima kasih telah menonton!", Some(0.85), 3.0));
+    }
+
+    #[test]
+    fn recognizes_outro_phrase_by_text_only() {
+        assert!(is_outro_phrase(" Terima kasih telah menonton! "));
+        assert!(!is_outro_phrase("Terima kasih."));
+        assert!(!is_outro_phrase("Oke, terima kasih telah menonton demonya"));
+    }
+
+    #[test]
+    fn keeps_plain_thanks_at_moderate_confidence() {
+        assert!(!is_likely_hallucination("Terima kasih.", Some(0.39), 2.0));
     }
 
     #[test]

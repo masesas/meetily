@@ -408,6 +408,16 @@ async fn run_retranscription<R: Runtime>(
             (text, conf)
         };
 
+        // Skip likely hallucinations; the range keeps its earlier text via transcript_merge
+        let confidence = if use_parakeet { None } else { Some(conf) };
+        if super::transcription::hallucination::is_likely_hallucination(&text, confidence, segment_duration_sec) {
+            warn!(
+                "Segment {}/{}: {:.1}s conf={:.2} dropped as likely hallucination: '{}'",
+                i + 1, processable_count, segment_duration_sec, conf, text.trim()
+            );
+            continue;
+        }
+
         // Skip empty transcripts
         let trimmed = text.trim();
         if !trimmed.is_empty() {

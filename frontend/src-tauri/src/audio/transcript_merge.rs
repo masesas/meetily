@@ -36,6 +36,8 @@ pub fn keep_uncovered_previous(
     let kept: Vec<TranscriptSegment> = previous
         .into_iter()
         .filter(|p| !p.text.trim().is_empty())
+        // An earlier run may have stored a hallucinated video outro; do not carry it over
+        .filter(|p| !crate::audio::transcription::hallucination::is_outro_phrase(&p.text))
         .filter(|p| span(p).is_some_and(|range| covered_share(range, &new_segments) < MAX_COVERED_SHARE))
         .collect();
 
@@ -104,6 +106,13 @@ mod tests {
         let blank = seg("   ", 50.0, 55.0);
         let merged = keep_uncovered_previous(vec![seg("final", 0.0, 5.0)], vec![no_time, blank]);
         assert_eq!(texts(&merged), vec!["final"]);
+    }
+
+    #[test]
+    fn does_not_carry_over_hallucinated_outro() {
+        let new = vec![seg("final", 273.0, 324.0)];
+        let previous = vec![seg("Terima kasih telah menonton!", 324.0, 335.0)];
+        assert_eq!(texts(&keep_uncovered_previous(new, previous)), vec!["final"]);
     }
 
     #[test]

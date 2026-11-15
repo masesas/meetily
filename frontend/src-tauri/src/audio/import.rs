@@ -597,6 +597,16 @@ async fn run_import<R: Runtime>(
             (text, conf)
         };
 
+        // Skip likely hallucinations (no live transcript exists to fall back on for imports)
+        let confidence = if use_parakeet { None } else { Some(conf) };
+        if super::transcription::hallucination::is_likely_hallucination(&text, confidence, segment_duration_sec) {
+            warn!(
+                "Segment {}/{}: {:.1}s conf={:.2} dropped as likely hallucination: '{}'",
+                i + 1, processable_count, segment_duration_sec, conf, text.trim()
+            );
+            continue;
+        }
+
         let trimmed = text.trim();
         if !trimmed.is_empty() {
             debug!(
