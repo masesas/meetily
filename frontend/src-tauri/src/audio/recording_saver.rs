@@ -390,6 +390,13 @@ impl RecordingSaver {
             return Err("No incremental saver initialized".to_string());
         };
 
+        // Save the mic/system loudness log next to the audio (used to label speakers)
+        if let Some(folder) = &self.meeting_folder {
+            if let Err(e) = super::source_activity::finish_and_save(folder) {
+                warn!("Source activity not saved; transcript will have no speaker labels: {}", e);
+            }
+        }
+
         // Save final transcripts.json with validation
         if let Some(folder) = &self.meeting_folder {
             if let Err(e) = self.write_transcripts_json(folder) {

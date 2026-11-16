@@ -35,6 +35,9 @@ pub struct Transcript {
     pub audio_start_time: Option<f64>,
     pub audio_end_time: Option<f64>,
     pub duration: Option<f64>,
+    /// "mic" (the user) or "system" (the call); set by finalization when the recording has a
+    /// source activity log.
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

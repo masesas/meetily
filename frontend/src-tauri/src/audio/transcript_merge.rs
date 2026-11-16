@@ -63,6 +63,7 @@ mod tests {
             audio_start_time: Some(start),
             audio_end_time: Some(end),
             duration: Some(end - start),
+            speaker: None,
         }
     }
 

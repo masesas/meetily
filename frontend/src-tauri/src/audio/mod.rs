@@ -6,6 +6,7 @@ pub mod ffmpeg;
 pub mod vad;
 pub mod vad_leveling;
 pub mod transcript_merge;
+pub mod source_activity;
 
 // Modularized device management
 pub mod devices;

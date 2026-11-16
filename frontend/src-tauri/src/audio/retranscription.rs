@@ -137,13 +137,38 @@ pub async fn start_retranscription<R: Runtime>(
     result
 }
 
+/// Sets each segment's speaker from the recording's mic/system loudness log. Without a log
+/// (imported files, recordings made before the log existed) speakers are left as they are.
+fn label_speakers(
+    segments: Vec<crate::api::TranscriptSegment>,
+    folder: &Path,
+) -> Vec<crate::api::TranscriptSegment> {
+    let Some(activity) = super::source_activity::load(folder) else {
+        return segments;
+    };
+    let labelled: Vec<_> = segments
+        .into_iter()
+        .map(|mut segment| {
+            if let (Some(start), Some(end)) = (segment.audio_start_time, segment.audio_end_time) {
+                segment.speaker = activity.speaker_for_range(start, end).map(str::to_string);
+            }
+            segment
+        })
+        .collect();
+    let mic = labelled.iter().filter(|s| s.speaker.as_deref() == Some(super::source_activity::SPEAKER_MIC)).count();
+    let system = labelled.iter().filter(|s| s.speaker.as_deref() == Some(super::source_activity::SPEAKER_SYSTEM)).count();
+    info!("Speaker labels: {} mic, {} system, {} unlabelled", mic, system, labelled.len() - mic - system);
+    labelled
+}
+
 /// Transcript segments currently stored for a meeting.
 async fn load_transcript_segments(
     conn: &mut sqlx::SqliteConnection,
     meeting_id: &str,
 ) -> Result<Vec<crate::api::TranscriptSegment>> {
-    let rows: Vec<(String, String, String, Option<f64>, Option<f64>, Option<f64>)> = sqlx::query_as(
-        "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration
+    type Row = (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker
          FROM transcripts WHERE meeting_id = ?",
     )
     .bind(meeting_id)
@@ -153,8 +178,8 @@ async fn load_transcript_segments(
 
     Ok(rows
         .into_iter()
-        .map(|(id, text, timestamp, audio_start_time, audio_end_time, duration)| {
-            crate::api::TranscriptSegment { id, text, timestamp, audio_start_time, audio_end_time, duration }
+        .map(|(id, text, timestamp, audio_start_time, audio_end_time, duration, speaker)| {
+            crate::api::TranscriptSegment { id, text, timestamp, audio_start_time, audio_end_time, duration, speaker }
         })
         .collect())
 }
@@ -475,6 +500,7 @@ async fn run_retranscription<R: Runtime>(
             segments.len() - new_count
         );
     }
+    let segments = label_speakers(segments, &folder_path);
 
     sqlx::query("DELETE FROM transcripts WHERE meeting_id = ?")
         .bind(&meeting_id)
@@ -484,8 +510,8 @@ async fn run_retranscription<R: Runtime>(
 
     for segment in &segments {
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&segment.id)
         .bind(&meeting_id)
@@ -494,6 +520,7 @@ async fn run_retranscription<R: Runtime>(
         .bind(segment.audio_start_time)
         .bind(segment.audio_end_time)
         .bind(segment.duration)
+        .bind(&segment.speaker)
         .execute(&mut *tx)
         .await
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;

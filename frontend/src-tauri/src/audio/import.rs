@@ -1191,6 +1191,7 @@ mod tests {
                 audio_start_time: Some(0.0),
                 audio_end_time: Some(1.5),
                 duration: Some(1.5),
+                speaker: None,
             },
             TranscriptSegment {
                 id: "t-2".to_string(),
@@ -1199,6 +1200,7 @@ mod tests {
                 audio_start_time: Some(2.0),
                 audio_end_time: Some(3.5),
                 duration: Some(1.5),
+                speaker: None,
             },
         ];
 
