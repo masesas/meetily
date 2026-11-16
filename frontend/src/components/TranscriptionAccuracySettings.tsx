@@ -29,7 +29,9 @@ export function TranscriptionAccuracySettings() {
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Kamus istilah</h3>
         <p className="text-sm text-gray-600 mb-3">
           Nama orang, nama PT, dan istilah yang sering salah dengar. Pisahkan dengan koma atau baris
-          baru. Dipakai Whisper saat transkripsi live dan saat finalisasi (sekitar 100 istilah pertama).
+          baru (sekitar 100 istilah pertama). Dipakai saat finalisasi dan import, tidak saat live:
+          setiap segmen ditranskrip dengan dan tanpa kamus, dan hasil dengan kamus hanya dipakai bila
+          isinya tetap sama (kamus boleh membetulkan ejaan, tidak boleh mengubah kalimat).
         </p>
         <textarea
           value={draft}

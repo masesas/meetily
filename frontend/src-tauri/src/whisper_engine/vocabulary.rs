@@ -47,6 +47,38 @@ pub fn build_initial_prompt(raw: &str) -> Option<String> {
     Some(prompt)
 }
 
+/// Minimum share of words the prompted and unprompted texts must have in common.
+const MIN_SHARED_WORDS: f64 = 0.6;
+/// Maximum ratio between the word counts of the two texts.
+const MAX_LENGTH_RATIO: f64 = 1.5;
+
+fn words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// True when the text transcribed with the vocabulary prompt is a correction of the text
+/// transcribed without it (mostly the same words, similar length) rather than a rewrite.
+/// A prompt can make Whisper invent a different sentence (2026-11-16: 10 s of speech became
+/// "Pertanyaan keempat." with any vocabulary prompt).
+pub fn prompted_text_is_consistent(unprompted: &str, prompted: &str) -> bool {
+    let base = words(unprompted);
+    let with = words(prompted);
+    if base.is_empty() || with.is_empty() {
+        return base.is_empty() && with.is_empty();
+    }
+    let (shorter, longer) = if base.len() <= with.len() { (&base, &with) } else { (&with, &base) };
+    if longer.len() as f64 / shorter.len() as f64 > MAX_LENGTH_RATIO {
+        return false;
+    }
+    let base_set: HashSet<&String> = base.iter().collect();
+    let with_set: HashSet<&String> = with.iter().collect();
+    let shared = base_set.intersection(&with_set).count();
+    shared as f64 / base_set.len().max(with_set.len()) as f64 >= MIN_SHARED_WORDS
+}
+
 /// Initial prompt for the vocabulary currently set by the frontend, if any.
 pub fn current_initial_prompt() -> Option<String> {
     let raw = VOCABULARY.lock().ok()?.clone();
@@ -103,6 +135,37 @@ mod tests {
         let raw: Vec<String> = (0..150).map(|i| format!("t{i}")).collect();
         let prompt = build_initial_prompt(&raw.join(",")).unwrap();
         assert_eq!(prompt.matches(", ").count() + 1, MAX_TERMS);
+    }
+
+    const SPOKEN: &str = "atau server lokal dengan Piper dan Voice Indonesia. Mau kita mulai tes kecil dulu untuk gaya bicara Indonesia-nya?";
+
+    #[test]
+    fn accepts_spelling_correction() {
+        assert!(prompted_text_is_consistent(
+            "Nah sekarang saya coba lecinkan",
+            "Nah, sekarang saya coba login."
+        ));
+        assert!(prompted_text_is_consistent(SPOKEN, SPOKEN));
+    }
+
+    #[test]
+    fn rejects_rewrites_seen_with_vocabulary_prompts() {
+        assert!(!prompted_text_is_consistent(SPOKEN, "Pertanyaan keempat."));
+        assert!(!prompted_text_is_consistent(
+            SPOKEN,
+            "Pertama, langkah kedua untuk mengoperasikan aplikasi, saya akan menyebut aplikasi ini seperti aplikasi-aplikasi yang ada di internet."
+        ));
+        assert!(!prompted_text_is_consistent(
+            SPOKEN,
+            "Pipers are available on other services or local servers with Piper and Voice Indonesia."
+        ));
+    }
+
+    #[test]
+    fn rejects_text_appearing_only_with_prompt() {
+        assert!(!prompted_text_is_consistent("", "login, logout"));
+        assert!(!prompted_text_is_consistent("Oke siap", ""));
+        assert!(prompted_text_is_consistent("", "  "));
     }
 
     #[test]

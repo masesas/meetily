@@ -401,19 +401,17 @@ async fn run_retranscription<R: Runtime>(
             (text, 0.9f32)
         } else {
             let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+            engine
+                .transcribe_final(segment.samples.clone(), language.clone())
                 .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?
         };
 
         // Skip likely hallucinations; the range keeps its earlier text via transcript_merge
-        let confidence = if use_parakeet { None } else { Some(conf) };
-        if super::transcription::hallucination::is_likely_hallucination(&text, confidence, segment_duration_sec) {
+        if super::transcription::hallucination::is_likely_hallucination(&text) {
             warn!(
-                "Segment {}/{}: {:.1}s conf={:.2} dropped as likely hallucination: '{}'",
-                i + 1, processable_count, segment_duration_sec, conf, text.trim()
+                "Segment {}/{}: {:.1}s dropped as likely hallucination: '{}'",
+                i + 1, processable_count, segment_duration_sec, text.trim()
             );
             continue;
         }

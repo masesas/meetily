@@ -246,16 +246,12 @@ pub fn start_transcription_task<R: Runtime>(
                                     stats.confidence_count += 1;
                                 }
 
-                                let hallucination = super::hallucination::is_likely_hallucination(
-                                    &transcript,
-                                    confidence_opt,
-                                    chunk_duration,
-                                );
+                                let hallucination =
+                                    super::hallucination::is_likely_hallucination(&transcript);
                                 if hallucination {
                                     debug!(
-                                        "dropped likely hallucination ({:.1}s, conf {:?}): {}",
+                                        "dropped likely hallucination ({:.1}s): {}",
                                         chunk_duration,
-                                        confidence_opt,
                                         crate::utils::log_snippet(&transcript, 80)
                                     );
                                 }
