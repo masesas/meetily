@@ -60,6 +60,15 @@ case "$MODE" in
     echo "dev app starting (pid $!), log: $LOG_DIR/dev.log"
     ;;
   build)
+    # A running `tauri dev` rebuilds on file changes and shares target/, corrupting the release build.
+    if pgrep -f "$ROOT/frontend/node_modules/.*tauri.js dev" >/dev/null; then
+      echo "stop the running 'scripts/mac.sh dev' app first" >&2
+      exit 1
+    fi
+    # With a deployment target set (src-tauri/.cargo/config.toml), stripping proc-macro dylibs with
+    # the Xcode 27 toolchain corrupts them ("mis-aligned LINKEDIT", "can't find crate"). Only
+    # build-time tools are left unstripped; the app binary is stripped as usual.
+    export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
     stage_sidecar release
     cd "$ROOT/frontend"
     [ -d node_modules ] || pnpm install
