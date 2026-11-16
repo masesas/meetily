@@ -1,7 +1,7 @@
 // Retranscription module - allows re-processing stored audio with different settings
 
 use crate::audio::decoder::decode_audio_file;
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::audio::vad_leveling::get_speech_chunks_leveled;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
@@ -137,6 +137,53 @@ pub async fn start_retranscription<R: Runtime>(
     result
 }
 
+/// Sets each segment's speaker from the recording's mic/system loudness log. Without a log
+/// (imported files, recordings made before the log existed) speakers are left as they are.
+fn label_speakers(
+    segments: Vec<crate::api::TranscriptSegment>,
+    folder: &Path,
+) -> Vec<crate::api::TranscriptSegment> {
+    let Some(activity) = super::source_activity::load(folder) else {
+        return segments;
+    };
+    let labelled: Vec<_> = segments
+        .into_iter()
+        .map(|mut segment| {
+            if let (Some(start), Some(end)) = (segment.audio_start_time, segment.audio_end_time) {
+                segment.speaker = activity.speaker_for_range(start, end).map(str::to_string);
+            }
+            segment
+        })
+        .collect();
+    let mic = labelled.iter().filter(|s| s.speaker.as_deref() == Some(super::source_activity::SPEAKER_MIC)).count();
+    let system = labelled.iter().filter(|s| s.speaker.as_deref() == Some(super::source_activity::SPEAKER_SYSTEM)).count();
+    info!("Speaker labels: {} mic, {} system, {} unlabelled", mic, system, labelled.len() - mic - system);
+    labelled
+}
+
+/// Transcript segments currently stored for a meeting.
+async fn load_transcript_segments(
+    conn: &mut sqlx::SqliteConnection,
+    meeting_id: &str,
+) -> Result<Vec<crate::api::TranscriptSegment>> {
+    type Row = (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker
+         FROM transcripts WHERE meeting_id = ?",
+    )
+    .bind(meeting_id)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| anyhow!("Failed to load existing transcripts: {}", e))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, text, timestamp, audio_start_time, audio_end_time, duration, speaker)| {
+            crate::api::TranscriptSegment { id, text, timestamp, audio_start_time, audio_end_time, duration, speaker }
+        })
+        .collect())
+}
+
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
@@ -240,7 +287,8 @@ async fn run_retranscription<R: Runtime>(
     let meeting_id_for_vad = meeting_id.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
-        get_speech_chunks_with_progress(
+        // Levelled VAD so a quiet remote speaker is not dropped (see vad_leveling)
+        get_speech_chunks_leveled(
             &audio_samples,
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {
@@ -378,12 +426,20 @@ async fn run_retranscription<R: Runtime>(
             (text, 0.9f32)
         } else {
             let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+            engine
+                .transcribe_final(segment.samples.clone(), language.clone())
                 .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?
         };
+
+        // Skip likely hallucinations; the range keeps its earlier text via transcript_merge
+        if super::transcription::hallucination::is_likely_hallucination(&text) {
+            warn!(
+                "Segment {}/{}: {:.1}s dropped as likely hallucination: '{}'",
+                i + 1, processable_count, segment_duration_sec, text.trim()
+            );
+            continue;
+        }
 
         // Skip empty transcripts
         let trimmed = text.trim();
@@ -434,6 +490,18 @@ async fn run_retranscription<R: Runtime>(
         .await
         .map_err(|e| anyhow!("Failed to start transaction: {}", e))?;
 
+    // Keep earlier text for time ranges this run left uncovered (VAD can miss quiet speech)
+    let previous = load_transcript_segments(&mut tx, &meeting_id).await?;
+    let new_count = segments.len();
+    let segments = super::transcript_merge::keep_uncovered_previous(segments, previous);
+    if segments.len() > new_count {
+        info!(
+            "Kept {} earlier segment(s) in time ranges the re-transcription did not cover",
+            segments.len() - new_count
+        );
+    }
+    let segments = label_speakers(segments, &folder_path);
+
     sqlx::query("DELETE FROM transcripts WHERE meeting_id = ?")
         .bind(&meeting_id)
         .execute(&mut *tx)
@@ -442,8 +510,8 @@ async fn run_retranscription<R: Runtime>(
 
     for segment in &segments {
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&segment.id)
         .bind(&meeting_id)
@@ -452,6 +520,7 @@ async fn run_retranscription<R: Runtime>(
         .bind(segment.audio_start_time)
         .bind(segment.audio_end_time)
         .bind(segment.duration)
+        .bind(&segment.speaker)
         .execute(&mut *tx)
         .await
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;

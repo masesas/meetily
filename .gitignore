@@ -77,3 +77,5 @@ experiments/
 target/
 
 frontend/src-tauri/binaries/
+# Meetily ID: local logs from scripts/mac.sh
+.logs/

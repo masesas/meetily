@@ -541,8 +541,40 @@ impl WhisperEngine {
         repeated_words as f32 / total_words
     }
     
-    /// Transcribe audio with streaming support for partial results and adaptive quality
+    /// Transcribe audio with streaming support for partial results and adaptive quality.
+    /// No vocabulary prompt: a prompt can make Whisper rewrite a whole segment, and live chunks
+    /// are not cross-checked (see `transcribe_final`).
     pub async fn transcribe_audio_with_confidence(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32, bool)> {
+        self.transcribe_with_prompt(audio_data, language, None).await
+    }
+
+    /// Transcription for finalization and import. Each segment is transcribed without and, when
+    /// a vocabulary is set, with the vocabulary prompt; the prompted text is used only when it
+    /// stays consistent with the unprompted one, so the vocabulary can fix spellings but not
+    /// replace what was said.
+    pub async fn transcribe_final(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32)> {
+        let (base, base_conf, _) = self
+            .transcribe_with_prompt(audio_data.clone(), language.clone(), None)
+            .await?;
+        let Some(prompt) = super::vocabulary::current_initial_prompt() else {
+            return Ok((base, base_conf));
+        };
+        let (prompted, prompted_conf, _) = self
+            .transcribe_with_prompt(audio_data, language, Some(&prompt))
+            .await?;
+        if super::vocabulary::prompted_text_is_consistent(&base, &prompted) {
+            Ok((prompted, prompted_conf))
+        } else {
+            log::info!(
+                "Vocabulary result rejected (rewrote the segment): '{}' -> '{}'",
+                crate::utils::log_snippet(&base, 80),
+                crate::utils::log_snippet(&prompted, 80)
+            );
+            Ok((base, base_conf))
+        }
+    }
+
+    async fn transcribe_with_prompt(&self, audio_data: Vec<f32>, language: Option<String>, prompt: Option<&str>) -> Result<(String, f32, bool)> {
         let ctx_lock = self.current_context.read().await;
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
@@ -568,6 +600,9 @@ impl WhisperEngine {
         };
         params.set_language(language_code);
         params.set_translate(should_translate);
+        if let Some(prompt) = prompt {
+            params.set_initial_prompt(prompt);
+        }
 
         // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
         // The "single timestamp ending - skip entire chunk" optimization incorrectly discards

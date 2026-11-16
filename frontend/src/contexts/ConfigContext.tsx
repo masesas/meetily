@@ -9,6 +9,9 @@ import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
 import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
 
+const VOCABULARY_STORAGE_KEY = 'transcriptionVocabulary';
+const AUTO_FINALIZE_STORAGE_KEY = 'isAutoFinalize';
+
 export interface OllamaModel {
   name: string;
   id: string;
@@ -60,6 +63,14 @@ interface ConfigContextType {
   // Language preference
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
+
+  // Transcription vocabulary (terms passed to Whisper as the initial prompt)
+  transcriptionVocabulary: string;
+  setTranscriptionVocabulary: (vocabulary: string) => void;
+
+  // Re-transcribe each new recording with the accurate model after it is saved
+  isAutoFinalize: boolean;
+  toggleIsAutoFinalize: (enabled: boolean) => void;
 
   // UI preferences
   showConfidenceIndicator: boolean;
@@ -149,6 +160,21 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return 'auto';
   });
 
+  const [transcriptionVocabulary, setTranscriptionVocabularyState] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(VOCABULARY_STORAGE_KEY) || '';
+    }
+    return '';
+  });
+
+  const [isAutoFinalize, setIsAutoFinalize] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(AUTO_FINALIZE_STORAGE_KEY);
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
+
   // UI preferences state
   const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -226,7 +252,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           console.error('[ConfigContext] Failed to sync language preference to Rust on startup:', err);
         });
     }
-  }, []); 
+    invoke('set_vocabulary_preference', { vocabulary: transcriptionVocabulary })
+      .catch(err => console.error('[ConfigContext] Failed to sync vocabulary to Rust on startup:', err));
+  }, []);
 
   // Load model configuration on mount
   useEffect(() => {
@@ -489,6 +517,23 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const setTranscriptionVocabulary = useCallback((vocabulary: string) => {
+    setTranscriptionVocabularyState(vocabulary);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(VOCABULARY_STORAGE_KEY, vocabulary);
+    }
+    invoke('set_vocabulary_preference', { vocabulary }).catch(err =>
+      console.error('Failed to sync vocabulary to Rust:', err)
+    );
+  }, []);
+
+  const toggleIsAutoFinalize = useCallback((enabled: boolean) => {
+    setIsAutoFinalize(enabled);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(AUTO_FINALIZE_STORAGE_KEY, String(enabled));
+    }
+  }, []);
+
   const value: ConfigContextType = useMemo(() => ({
     modelConfig,
     setModelConfig,
@@ -503,6 +548,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setSelectedDevices,
     selectedLanguage,
     setSelectedLanguage: handleSetSelectedLanguage,
+    transcriptionVocabulary,
+    setTranscriptionVocabulary,
+    isAutoFinalize,
+    toggleIsAutoFinalize,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
     betaFeatures,
@@ -526,6 +575,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     selectedDevices,
     selectedLanguage,
     handleSetSelectedLanguage,
+    transcriptionVocabulary,
+    setTranscriptionVocabulary,
+    isAutoFinalize,
+    toggleIsAutoFinalize,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
     betaFeatures,

@@ -1046,6 +1046,7 @@ impl AudioPipeline {
         // Initialize professional audio mixing components
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate);
         let mixer = ProfessionalAudioMixer::new(sample_rate);
+        super::source_activity::start(sample_rate);
 
         // Note: target_chunk_duration_ms is ignored - VAD controls segmentation now
         let _ = target_chunk_duration_ms;
@@ -1128,6 +1129,9 @@ impl AudioPipeline {
     }
 
     fn emit_mixed_window(&mut self, mic_window: &[f32], sys_window: &[f32], timestamp: f64) {
+        // Per-source loudness, used later to label transcript segments mic/system
+        super::source_activity::record(mic_window, sys_window);
+
         // Simple mixing without aggressive ducking
         let mixed_clean = self.mixer.mix_window(&mic_window, &sys_window);
 

@@ -2,7 +2,7 @@
 
 use crate::api::TranscriptSegment;
 use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::audio::vad_leveling::get_speech_chunks_leveled;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
@@ -432,7 +432,8 @@ async fn run_import<R: Runtime>(
     let app_for_vad = app.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
-        get_speech_chunks_with_progress(
+        // Levelled VAD so a quiet remote speaker is not dropped (see vad_leveling)
+        get_speech_chunks_leveled(
             &audio_samples,
             VAD_REDEMPTION_TIME_MS,
             |vad_progress, segments_found| {
@@ -589,12 +590,20 @@ async fn run_import<R: Runtime>(
             (text, 0.9f32)
         } else {
             let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+            engine
+                .transcribe_final(segment.samples.clone(), language.clone())
                 .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?
         };
+
+        // Skip likely hallucinations (no live transcript exists to fall back on for imports)
+        if super::transcription::hallucination::is_likely_hallucination(&text) {
+            warn!(
+                "Segment {}/{}: {:.1}s dropped as likely hallucination: '{}'",
+                i + 1, processable_count, segment_duration_sec, text.trim()
+            );
+            continue;
+        }
 
         let trimmed = text.trim();
         if !trimmed.is_empty() {
@@ -1182,6 +1191,7 @@ mod tests {
                 audio_start_time: Some(0.0),
                 audio_end_time: Some(1.5),
                 duration: Some(1.5),
+                speaker: None,
             },
             TranscriptSegment {
                 id: "t-2".to_string(),
@@ -1190,6 +1200,7 @@ mod tests {
                 audio_start_time: Some(2.0),
                 audio_end_time: Some(3.5),
                 duration: Some(1.5),
+                speaker: None,
             },
         ];
 

@@ -12,6 +12,8 @@ import {
   applyPinnedSummaryLanguageToMeeting,
   detectAndCacheSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+import { useConfig } from '@/contexts/ConfigContext';
+import { startTranscriptFinalization } from '@/lib/transcriptFinalization';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -68,6 +70,7 @@ export function useRecordingStop(
   } = useSidebar();
 
   const router = useRouter();
+  const { isAutoFinalize, selectedLanguage } = useConfig();
 
   // Guard to prevent duplicate/concurrent stop calls (e.g., from UI and tray simultaneously)
   const stopInProgressRef = useRef(false);
@@ -296,6 +299,16 @@ export function useRecordingStop(
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
+          // Replace the live transcript with an accurate re-transcription (runs in the background)
+          if (isAutoFinalize && folderPath) {
+            const started = await startTranscriptFinalization(meetingId, folderPath, selectedLanguage);
+            if (started) {
+              toast.info('Finalisasi transkrip berjalan', {
+                description: 'Transkrip live akan diganti hasil model akurat dalam beberapa menit.',
+              });
+            }
+          }
+
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');
           sessionStorage.removeItem('last_recording_meeting_name');
@@ -435,6 +448,8 @@ export function useRecordingStop(
     meetings,
     setIsMeetingActive,
     router,
+    isAutoFinalize,
+    selectedLanguage,
   ]);
 
   // Expose handleRecordingStop function to window for Rust callbacks
