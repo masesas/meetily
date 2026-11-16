@@ -63,8 +63,14 @@ case "$MODE" in
     stage_sidecar release
     cd "$ROOT/frontend"
     [ -d node_modules ] || pnpm install
-    pnpm tauri:build
-    echo "bundle: $ROOT/target/release/bundle/"
+    # Only the .app: DMG creation scripts Finder and fails in headless sessions.
+    feature="$(node scripts/auto-detect-gpu.js 2>/dev/null | tail -1 || true)"
+    if [ -n "$feature" ] && [ "$feature" != "none" ]; then
+      pnpm tauri build --bundles app -- --features "$feature"
+    else
+      pnpm tauri build --bundles app
+    fi
+    echo "app: $ROOT/target/release/bundle/macos/"
     ;;
   *)
     usage

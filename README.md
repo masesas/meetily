@@ -1,3 +1,78 @@
+# Meetily ID — Meetily untuk pengguna Indonesia
+
+Fork dari [Zackriya-Solutions/meetily](https://github.com/Zackriya-Solutions/meetily) (lisensi MIT) yang
+disetel untuk meeting dan call berbahasa Indonesia, termasuk campuran istilah Inggris. Aplikasi berjalan
+sebagai **Meetily ID** (`com.masesas.meetily-id`): data, izin macOS, dan pengaturannya terpisah dari
+Meetily resmi, dan auto-update dimatikan agar fork tidak tertimpa versi upstream.
+
+README asli upstream ada di bawah bagian ini.
+
+## Model yang dipakai
+
+| Peran | Model | Ukuran | Kenapa |
+|---|---|---|---|
+| Transkripsi **live** (selama meeting) | Whisper `large-v3-turbo-q5_0` | 547 MB | Cepat: potongan 5 dtk selesai ±0,7 dtk di Apple M5; akurasi setara versi F16 (1,6 GB) |
+| **Finalisasi** (setelah rekaman disimpan) dan **import** | Whisper `large-v3-q5_0` | 1,08 GB | Paling akurat pada uji meeting Indonesia: semua koreksi manual tepat, teks paling lengkap, tanda baca rapi; meeting 32 mnt ±3 mnt |
+| Bahasa | `id` (Indonesian) | — | Jangan `auto`: deteksi otomatis menghasilkan campuran bahasa lain |
+| Deteksi suara (VAD) | Silero (bawaan Meetily) + leveling | — | Pembicara yang pelan tetap terdeteksi (lihat Enhancement) |
+
+Tidak disarankan untuk Bahasa Indonesia (hasil uji pada rekaman yang sama):
+
+| Model | Alasan |
+|---|---|
+| Parakeet (default Meetily) | Tidak mendukung Bahasa Indonesia; hasil campur Inggris/Spanyol |
+| `medium-id` (fine-tune Indonesia) | Banyak isi hilang, singkatan dieja per huruf, istilah Inggris rusak |
+| Qwen3-ASR-1.7B | Tidak lebih akurat pada rekaman meeting kita; konteks/kamus bocor menjadi teks; butuh runtime terpisah dari whisper.cpp |
+
+Model diunduh dari **Settings → Transcription** (nama di daftar: *Large V3 Turbo q5_0* dan *Large V3
+Compressed* = `large-v3-q5_0`) ke `~/Library/Application Support/com.masesas.meetily-id/models/`.
+
+## Pengaturan yang disarankan
+
+1. Settings → Transcription: model live **`large-v3-turbo-q5_0`**, bahasa **Indonesian**.
+2. Unduh juga **`large-v3-q5_0`** dan biarkan **Finalisasi transkrip otomatis** menyala.
+3. Isi **Kamus istilah** hanya dengan nama orang, nama PT, dan istilah yang sering salah dengar.
+4. Pakai **headphone** saat call: tanpa headphone suara lawan bicara bergema ke mic, menurunkan akurasi
+   transkrip dan label pembicara.
+
+## Enhancement di fork ini
+
+| Fitur | Isi |
+|---|---|
+| **Finalisasi otomatis** | Setelah rekaman disimpan, audio utuh ditranskrip ulang dengan `large-v3-q5_0` dan menggantikan transkrip live. Rekaman baru membatalkan finalisasi yang masih berjalan (transkrip live tetap tersimpan). Import langsung memakai model akurat. |
+| **Kamus istilah** | Daftar istilah dikirim ke Whisper sebagai prompt saat finalisasi dan import. Tiap segmen ditranskrip **dengan dan tanpa** kamus; hasil dengan kamus hanya dipakai bila ≥60% katanya sama, karena prompt bisa membuat Whisper mengarang ulang kalimat. Tidak dipakai saat live. |
+| **Filter halusinasi** | Segmen yang seluruhnya "Terima kasih." atau penutup video ("Terima kasih telah menonton") dibuang — di live, finalisasi, dan import. |
+| **VAD leveling** | Deteksi suara saat finalisasi/import berjalan pada salinan audio yang kenyaringannya disamakan per detik (maks 4×), sehingga lawan bicara yang ±7 dB lebih pelan tidak terbuang. Whisper tetap menerima audio asli. |
+| **Jaring pengaman finalisasi** | Teks live dipertahankan di rentang waktu yang tidak tertangkap finalisasi, sehingga finalisasi tidak pernah menghapus isi yang sudah tertangkap. |
+| **Label Saya / Orang lain** | Kenyaringan mic dan audio sistem dicatat terpisah (`source_activity.json`) saat merekam; finalisasi memberi label **Saya** (mic) atau **Orang lain** (audio sistem). Label tampil di transkrip dan ikut ke teks ringkasan/salin. |
+| **Skrip Mac** | `scripts/mac.sh dev\|build` mengurus sidecar `llama-helper` (Metal) dan OpenSSL 3. |
+
+## Build dan jalankan di Mac (Apple Silicon)
+
+Prasyarat: Xcode, Rust, Node.js + pnpm, CMake, `brew install openssl@3`.
+
+```bash
+git submodule update --init --recursive
+scripts/mac.sh build   # .app rilis -> target/release/bundle/macos/Meetily ID.app
+scripts/mac.sh dev     # mode pengembangan (log: .logs/dev.log)
+```
+
+Kenapa skrip ini: sidecar `llama-helper` harus di-build sebelum Tauri, dan `cpp-httplib` di llama.cpp
+belum bisa di-compile dengan OpenSSL 4 yang kini default di Homebrew.
+
+## Batasan yang diketahui
+
+- **Label pembicara** hanya untuk rekaman live di Meetily ID; file import dan rekaman lama tidak berlabel.
+  Ambang pembeda mic/sistem belum dikalibrasi untuk speaker laptop. Label per orang (Pembicara 1, 2, 3)
+  sengaja tidak dipakai: uji diarization pada meeting nyata tidak stabil.
+- **Ganti nama label** belum tersedia.
+- Nilai "confidence" bawaan Meetily dihitung dari panjang teks, bukan dari model.
+- Build rilis ditandatangani ad-hoc: setelah build ulang, izin Microphone / Screen & System Audio
+  Recording mungkin perlu diberikan lagi.
+- Mode dev kadang menampilkan layar kosong saat start; tekan Cmd+R.
+
+---
+
 <div align="center" style="border-bottom: none">
     <h1>
         <img src="docs/Meetily-6.png" style="border-radius: 10px;" />
